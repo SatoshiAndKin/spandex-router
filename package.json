@@ -18,6 +18,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@curvefi/api": "^2.68.37",
     "@spandex/core": "^0.4.3",
     "viem": "^2.40.0"
   },

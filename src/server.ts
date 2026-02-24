@@ -8,13 +8,16 @@ import {
   getSpandexConfig,
   getTokenDecimals,
   getTokenSymbol,
+  getClient,
   SUPPORTED_CHAINS,
   DEFAULT_TOKENS,
 } from "./config.js";
 import { defaultTokens } from "./default-tokenlist.js";
+import { initCurve, findCurveQuote, isCurveSupported, type CurveQuoteResult } from "./curve.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
+const CURVE_ENABLED = process.env.CURVE_ENABLED !== "false";
 
 function log(message: string) {
   const timestamp = new Date().toISOString();
@@ -129,6 +132,97 @@ async function findQuote(
   return result;
 }
 
+interface CompareResult {
+  spandex: QuoteResult | null;
+  spandex_error: string | null;
+  curve: CurveQuoteResult | null;
+  curve_error: string | null;
+  recommendation: "spandex" | "curve" | null;
+  recommendation_reason: string;
+  gas_price_gwei: string | null;
+}
+
+async function compareQuotes(
+  chainId: number,
+  from: string,
+  to: string,
+  amount: string,
+  slippageBps: number,
+  sender?: string
+): Promise<CompareResult> {
+  const spandexPromise = findQuote(chainId, from, to, amount, slippageBps, sender)
+    .then((r) => ({ result: r, error: null }))
+    .catch((err) => ({ result: null, error: err instanceof Error ? err.message : String(err) }));
+
+  const curveAvailable = CURVE_ENABLED && isCurveSupported(chainId);
+  const curvePromise = curveAvailable
+    ? findCurveQuote(from, to, amount, sender)
+        .then((r) => ({ result: r, error: null }))
+        .catch((err) => ({ result: null, error: err instanceof Error ? err.message : String(err) }))
+    : Promise.resolve({ result: null, error: "Curve only supports Ethereum (chainId 1)" });
+
+  let gasPriceGwei: string | null = null;
+  try {
+    const client = getClient(chainId);
+    const gasPrice = await client.getGasPrice();
+    gasPriceGwei = (Number(gasPrice) / 1e9).toFixed(4);
+  } catch {
+    // Gas price fetch failed, skip
+  }
+
+  const [spandex, curveResult] = await Promise.all([spandexPromise, curvePromise]);
+
+  let recommendation: "spandex" | "curve" | null = null;
+  let reason = "";
+
+  if (spandex.result && curveResult.result) {
+    const spandexOutput = Number(spandex.result.output_amount);
+    const curveOutput = Number(curveResult.result.output_amount);
+    const spandexGas = Number(spandex.result.gas_used || "0");
+    const gasPriceWei = gasPriceGwei ? Number(gasPriceGwei) * 1e9 : 0;
+    const spandexGasCostEth = gasPriceWei > 0 ? (spandexGas * gasPriceWei) / 1e18 : 0;
+
+    if (curveOutput > spandexOutput) {
+      recommendation = "curve";
+      const diff = curveOutput - spandexOutput;
+      const pct = ((diff / spandexOutput) * 100).toFixed(3);
+      reason = `Curve outputs ${diff.toFixed(6)} more (+${pct}%)`;
+      if (spandexGasCostEth > 0) {
+        reason += `. Spandex gas: ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH)`;
+      }
+    } else if (spandexOutput > curveOutput) {
+      recommendation = "spandex";
+      const diff = spandexOutput - curveOutput;
+      const pct = ((diff / curveOutput) * 100).toFixed(3);
+      reason = `Spandex (${spandex.result.provider}) outputs ${diff.toFixed(6)} more (+${pct}%)`;
+      if (spandexGasCostEth > 0) {
+        reason += `. Spandex gas: ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH)`;
+      }
+    } else {
+      recommendation = "spandex";
+      reason = "Equal output amounts; defaulting to Spandex for multi-provider coverage";
+    }
+  } else if (spandex.result) {
+    recommendation = "spandex";
+    reason = "Only Spandex returned a quote";
+  } else if (curveResult.result) {
+    recommendation = "curve";
+    reason = "Only Curve returned a quote";
+  } else {
+    reason = "Neither source returned a quote";
+  }
+
+  return {
+    spandex: spandex.result,
+    spandex_error: spandex.error,
+    curve: curveResult.result,
+    curve_error: curveResult.error,
+    recommendation,
+    recommendation_reason: reason,
+    gas_price_gwei: gasPriceGwei,
+  };
+}
+
 function sendJson(res: http.ServerResponse, status: number, data: object) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(serializeWithBigInt(data));
@@ -148,7 +242,7 @@ const INDEX_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spandex Quote Finder</title>
+  <title>FlashProfits Quote Finder</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
@@ -163,8 +257,9 @@ const INDEX_HTML = `<!DOCTYPE html>
     button { padding: 12px 24px; font-size: 16px; cursor: pointer; background: #0066cc; color: white; border: none; border-radius: 4px; }
     button:hover { background: #0052a3; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
-    #result { background: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 8px; display: none; }
+    #result { display: none; }
     #result.show { display: block; }
+    .result-box { background: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 0 0 8px 8px; }
     .error { color: #e74c3c; }
     .result-header { color: #888; margin-bottom: 12px; font-size: 14px; }
     .field { margin-bottom: 12px; }
@@ -172,6 +267,17 @@ const INDEX_HTML = `<!DOCTYPE html>
     .field-value { color: #4ec9b0; word-break: break-all; }
     .field-value.number { color: #b5cea8; }
     .provider-tag { display: inline-block; background: #264f78; color: #9cdcfe; padding: 3px 10px; border-radius: 4px; font-size: 13px; margin-left: 8px; }
+    .recommendation-banner { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 13px; }
+    .recommendation-banner.winner { background: #1a3a1a; color: #4ec9b0; border: 1px solid #2d5a2d; }
+    .recommendation-banner.loser { background: #3a2a1a; color: #d4a054; border: 1px solid #5a3a1a; }
+    .recommendation-banner.error { background: #3a1a1a; color: #e74c3c; border: 1px solid #5a1a1a; }
+    .tabs { display: flex; gap: 0; }
+    .tab { padding: 10px 20px; cursor: pointer; background: #ccc; color: #555; border: none; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 600; }
+    .tab.active { background: #1e1e1e; color: #d4d4d4; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .route-step { background: #2d2d2d; padding: 10px; border-radius: 4px; margin: 8px 0; }
+    .route-step-header { color: #dcdcaa; margin-bottom: 6px; }
     .autocomplete-list { position: absolute; z-index: 10; background: white; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; width: 100%; display: none; }
     .autocomplete-list.show { display: block; }
     .autocomplete-item { padding: 8px 10px; cursor: pointer; font-size: 13px; font-family: monospace; }
@@ -190,7 +296,7 @@ const INDEX_HTML = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>Spandex Quote Finder</h1>
+  <h1>FlashProfits Quote Finder</h1>
 
   <details class="tokenlist-section">
     <summary>Token List (autocomplete)</summary>
@@ -242,10 +348,19 @@ const INDEX_HTML = `<!DOCTYPE html>
       <label for="sender">Sender (optional, for approval check)</label>
       <input type="text" id="sender" placeholder="0x...">
     </div>
-    <button type="submit" id="submit">Get Quote</button>
+    <button type="submit" id="submit">Compare Quotes</button>
   </form>
 
-  <div id="result"></div>
+  <div id="result">
+    <div class="tabs">
+      <button class="tab active" data-tab="recommended" id="tabRecommended">Recommended</button>
+      <button class="tab" data-tab="alternative" id="tabAlternative">Alternative</button>
+    </div>
+    <div class="result-box">
+      <div class="tab-content active" id="recommendedContent"></div>
+      <div class="tab-content" id="alternativeContent"></div>
+    </div>
+  </div>
 
   <script>
     const DEFAULT_TOKENS = ${JSON.stringify(DEFAULT_TOKENS)};
@@ -389,17 +504,33 @@ const INDEX_HTML = `<!DOCTYPE html>
       applyDefaults(Number(this.value));
     });
 
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab + 'Content').classList.add('active');
+      });
+    });
+
     const form = document.getElementById('form');
     const result = document.getElementById('result');
     const submit = document.getElementById('submit');
 
-    function showResult(data) {
-      result.className = 'show';
-      result.innerHTML = \`
-        <div class="result-header">Quote Found <span class="provider-tag">\${data.provider}</span></div>
+    function renderSpandexQuote(data, isWinner) {
+      const banner = isWinner
+        ? '<div class="recommendation-banner winner">RECOMMENDED</div>'
+        : '<div class="recommendation-banner loser">Alternative quote</div>';
+      return banner + \`
+        <div class="result-header">Spandex Quote <span class="provider-tag">\${data.provider}</span></div>
         <div class="field">
-          <div class="field-label">Chain</div>
-          <div class="field-value number">\${data.chainId}</div>
+          <div class="field-label">Output Amount</div>
+          <div class="field-value number">\${data.output_amount}\${data.to_symbol ? ' ' + data.to_symbol : ''}</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Gas Used</div>
+          <div class="field-value number">\${data.gas_used}</div>
         </div>
         <div class="field">
           <div class="field-label">From</div>
@@ -414,20 +545,8 @@ const INDEX_HTML = `<!DOCTYPE html>
           <div class="field-value number">\${data.amount}\${data.from_symbol ? ' ' + data.from_symbol : ''}</div>
         </div>
         <div class="field">
-          <div class="field-label">Output Amount</div>
-          <div class="field-value number">\${data.output_amount}\${data.to_symbol ? ' ' + data.to_symbol : ''}</div>
-        </div>
-        <div class="field">
-          <div class="field-label">Output (raw)</div>
-          <div class="field-value number" style="font-size: 11px;">\${data.output_amount_raw}</div>
-        </div>
-        <div class="field">
           <div class="field-label">Slippage</div>
           <div class="field-value number">\${data.slippage_bps} bps</div>
-        </div>
-        <div class="field">
-          <div class="field-label">Gas Used</div>
-          <div class="field-value number">\${data.gas_used}</div>
         </div>
         \${data.approval_token ? \`
         <div class="field">
@@ -456,9 +575,146 @@ const INDEX_HTML = `<!DOCTYPE html>
       \`;
     }
 
+    function formatCurveRoute(route, symbols) {
+      if (!route || route.length === 0) return '';
+      return route.map((step, i) => {
+        const poolName = step.poolName || step.poolId || 'Unknown Pool';
+        const showPoolId = step.poolName && step.poolId && step.poolName !== step.poolId;
+        const inputSymbol = symbols[step.inputCoinAddress?.toLowerCase()] || '';
+        const outputSymbol = symbols[step.outputCoinAddress?.toLowerCase()] || '';
+        return \`
+        <div class="route-step">
+          <div class="route-step-header">Step \${i + 1}: \${poolName}\${showPoolId ? ' <span style="color: #888; font-size: 11px;">' + step.poolId + '</span>' : ''}</div>
+          <div class="field-label">Pool</div>
+          <div class="field-value"><span style="color: #888; font-size: 11px;">\${step.poolAddress || ''}</span></div>
+          <div class="field-label">Input</div>
+          <div class="field-value">\${inputSymbol ? inputSymbol + ' ' : ''}<span style="color: #888; font-size: 11px;">\${step.inputCoinAddress || ''}</span></div>
+          <div class="field-label">Output</div>
+          <div class="field-value">\${outputSymbol ? outputSymbol + ' ' : ''}<span style="color: #888; font-size: 11px;">\${step.outputCoinAddress || ''}</span></div>
+        </div>
+      \`}).join('');
+    }
+
+    function renderCurveQuote(data, isWinner) {
+      const symbols = {};
+      symbols[data.from.toLowerCase()] = data.from_symbol;
+      symbols[data.to.toLowerCase()] = data.to_symbol;
+      if (data.route_symbols) {
+        Object.entries(data.route_symbols).forEach(([k, v]) => { symbols[k.toLowerCase()] = v; });
+      }
+      const banner = isWinner
+        ? '<div class="recommendation-banner winner">RECOMMENDED</div>'
+        : '<div class="recommendation-banner loser">Alternative quote</div>';
+      return banner + \`
+        <div class="result-header">Curve Quote</div>
+        <div class="field">
+          <div class="field-label">Output Amount</div>
+          <div class="field-value number">\${data.output_amount}\${data.to_symbol ? ' ' + data.to_symbol : ''}</div>
+        </div>
+        <div class="field">
+          <div class="field-label">From</div>
+          <div class="field-value">\${data.from_symbol ? data.from_symbol + ' ' : ''}<span style="color: #888; font-size: 11px;">\${data.from}</span></div>
+        </div>
+        <div class="field">
+          <div class="field-label">To</div>
+          <div class="field-value">\${data.to_symbol ? data.to_symbol + ' ' : ''}<span style="color: #888; font-size: 11px;">\${data.to}</span></div>
+        </div>
+        <div class="field">
+          <div class="field-label">Input Amount</div>
+          <div class="field-value number">\${data.amount}\${data.from_symbol ? ' ' + data.from_symbol : ''}</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Route (\${data.route.length} steps)</div>
+          \${formatCurveRoute(data.route, symbols)}
+        </div>
+        \${data.approval_target ? \`
+        <div class="field">
+          <div class="field-label">Approval Target</div>
+          <div class="field-value">\${data.approval_target}</div>
+        </div>
+        \` : ''}
+        <div class="field">
+          <div class="field-label">Router Address</div>
+          <div class="field-value">\${data.router_address}</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Router Calldata</div>
+          <div class="field-value" style="font-size: 11px;">\${data.router_calldata}</div>
+        </div>
+      \`;
+    }
+
+    function showCompareResult(data) {
+      result.className = 'show';
+      const rec = document.getElementById('recommendedContent');
+      const alt = document.getElementById('alternativeContent');
+      const tabRec = document.getElementById('tabRecommended');
+      const tabAlt = document.getElementById('tabAlternative');
+
+      // Reset to recommended tab
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tabRec.classList.add('active');
+      rec.classList.add('active');
+
+      let reasonHtml = '<div class="field" style="margin-bottom: 16px;">' +
+        '<div class="field-label">Comparison</div>' +
+        '<div class="field-value">' + data.recommendation_reason + '</div>';
+      if (data.gas_price_gwei) {
+        reasonHtml += '<div class="field-value number" style="font-size: 12px; margin-top: 4px;">Gas price: ' + data.gas_price_gwei + ' gwei</div>';
+      }
+      reasonHtml += '</div>';
+
+      if (data.recommendation === 'spandex' && data.spandex) {
+        tabRec.textContent = 'Spandex (Recommended)';
+        rec.innerHTML = reasonHtml + renderSpandexQuote(data.spandex, true);
+        if (data.curve) {
+          tabAlt.textContent = 'Curve';
+          tabAlt.style.display = '';
+          alt.innerHTML = renderCurveQuote(data.curve, false);
+        } else {
+          tabAlt.textContent = 'Curve';
+          tabAlt.style.display = '';
+          alt.innerHTML = '<div class="recommendation-banner error">' + (data.curve_error || 'No quote available') + '</div>';
+        }
+      } else if (data.recommendation === 'curve' && data.curve) {
+        tabRec.textContent = 'Curve (Recommended)';
+        rec.innerHTML = reasonHtml + renderCurveQuote(data.curve, true);
+        if (data.spandex) {
+          tabAlt.textContent = 'Spandex';
+          tabAlt.style.display = '';
+          alt.innerHTML = renderSpandexQuote(data.spandex, false);
+        } else {
+          tabAlt.textContent = 'Spandex';
+          tabAlt.style.display = '';
+          alt.innerHTML = '<div class="recommendation-banner error">' + (data.spandex_error || 'No quote available') + '</div>';
+        }
+      } else if (data.spandex) {
+        tabRec.textContent = 'Spandex';
+        rec.innerHTML = reasonHtml + renderSpandexQuote(data.spandex, false);
+        tabAlt.style.display = 'none';
+        alt.innerHTML = '';
+      } else if (data.curve) {
+        tabRec.textContent = 'Curve';
+        rec.innerHTML = reasonHtml + renderCurveQuote(data.curve, false);
+        tabAlt.style.display = 'none';
+        alt.innerHTML = '';
+      } else {
+        tabRec.textContent = 'Results';
+        rec.innerHTML = '<div class="error">No quotes available. ' +
+          (data.spandex_error ? 'Spandex: ' + data.spandex_error + '. ' : '') +
+          (data.curve_error ? 'Curve: ' + data.curve_error : '') + '</div>';
+        tabAlt.style.display = 'none';
+        alt.innerHTML = '';
+      }
+    }
+
     function showError(msg) {
       result.className = 'show';
-      result.innerHTML = '<div class="error">' + msg + '</div>';
+      const rec = document.getElementById('recommendedContent');
+      rec.innerHTML = '<div class="error">' + msg + '</div>';
+      document.getElementById('tabRecommended').textContent = 'Results';
+      document.getElementById('tabAlternative').style.display = 'none';
     }
 
     form.addEventListener('submit', async (e) => {
@@ -472,21 +728,24 @@ const INDEX_HTML = `<!DOCTYPE html>
       const sender = document.getElementById('sender').value.trim();
 
       submit.disabled = true;
-      submit.textContent = 'Finding Quote...';
+      submit.textContent = 'Comparing...';
       result.className = 'show';
-      result.innerHTML = '<div class="result-header">Querying aggregators for best price...</div>';
+      const rec = document.getElementById('recommendedContent');
+      rec.innerHTML = '<div class="result-header">Querying Spandex + Curve for best price...</div>';
+      document.getElementById('tabRecommended').textContent = 'Loading...';
+      document.getElementById('tabAlternative').style.display = 'none';
 
       try {
         const params = new URLSearchParams({ chainId, from, to, amount, slippageBps });
         if (sender) params.set('sender', sender);
 
-        const res = await fetch('/quote?' + params.toString());
+        const res = await fetch('/compare?' + params.toString());
         const data = await res.json();
 
         if (data.error) {
           showError(data.error);
         } else {
-          showResult(data);
+          showCompareResult(data);
           const url = new URL(window.location.href);
           url.searchParams.set('chainId', chainId);
           url.searchParams.set('from', from);
@@ -501,7 +760,7 @@ const INDEX_HTML = `<!DOCTYPE html>
         showError('Request failed: ' + err.message);
       } finally {
         submit.disabled = false;
-        submit.textContent = 'Get Quote';
+        submit.textContent = 'Compare Quotes';
       }
     });
 
@@ -579,11 +838,66 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return;
   }
 
+  if (url.pathname === "/compare" && req.method === "GET") {
+    const parsed = parseQuoteParams(url.searchParams);
+    if (!parsed.success) {
+      sendError(res, 400, parsed.error);
+      return;
+    }
+
+    const { chainId, from, to, amount, slippageBps, sender } = parsed.data;
+
+    const startTime = Date.now();
+    try {
+      const result = await compareQuotes(chainId, from, to, amount, slippageBps, sender);
+      const duration = Date.now() - startTime;
+      log(
+        `Compare: chain=${chainId} ${from.slice(0, 10)} -> ${to.slice(0, 10)}, ` +
+          `amount=${amount}, recommendation=${result.recommendation}, ${duration}ms`
+      );
+      sendJson(res, 200, result);
+    } catch (err) {
+      const duration = Date.now() - startTime;
+      logError(
+        `Compare failed: chain=${chainId} ${from.slice(0, 10)} -> ${to.slice(0, 10)}, ${duration}ms`,
+        err
+      );
+      sendError(res, 500, err instanceof Error ? err.message : "Unknown error");
+    }
+    return;
+  }
+
   log(`404: ${req.method} ${url.pathname}`);
   sendError(res, 404, "Not found");
 }
 
-const server = http.createServer(handleRequest);
-server.listen(PORT, HOST, () => {
-  log(`Server listening on http://${HOST}:${PORT}`);
+async function main() {
+  if (CURVE_ENABLED) {
+    const rpcUrl =
+      process.env.RPC_URL_1 ||
+      (process.env.ALCHEMY_API_KEY
+        ? `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+        : "");
+    if (rpcUrl) {
+      try {
+        log("Initializing Curve API...");
+        await initCurve(rpcUrl);
+        log("Curve API initialized");
+      } catch (err) {
+        logError("Curve initialization failed, continuing without Curve", err);
+      }
+    } else {
+      log("No RPC URL for Ethereum, Curve disabled");
+    }
+  }
+
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, HOST, () => {
+    log(`Server listening on http://${HOST}:${PORT}`);
+  });
+}
+
+main().catch((err) => {
+  logError("Failed to start server", err);
+  process.exit(1);
 });

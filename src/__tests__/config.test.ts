@@ -44,9 +44,7 @@ describe("config", () => {
     it("includes all 7 chains", async () => {
       const { SUPPORTED_CHAINS } = await loadConfig();
       const ids = Object.keys(SUPPORTED_CHAINS).map(Number);
-      expect(ids).toEqual(
-        expect.arrayContaining([1, 8453, 42161, 10, 137, 56, 43114])
-      );
+      expect(ids).toEqual(expect.arrayContaining([1, 8453, 42161, 10, 137, 56, 43114]));
       expect(ids).toHaveLength(7);
     });
 

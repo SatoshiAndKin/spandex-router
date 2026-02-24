@@ -2,6 +2,12 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    pool: "threads",
+    isolate: true,
+    reporters: ["verbose"],
+    benchmark: {
+      reporters: ["verbose"],
+    },
     coverage: {
       provider: "v8",
       thresholds: {

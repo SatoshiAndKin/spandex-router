@@ -16,11 +16,14 @@ import {
 import { defaultTokens } from "./default-tokenlist.js";
 import { initCurve, findCurveQuote, isCurveSupported, type CurveQuoteResult } from "./curve.js";
 import { logger } from "./logger.js";
-import { captureException } from "./sentry.js";
+import { captureException, captureMessage } from "./sentry.js";
+import { getRequestId, setTraceHeaders } from "./tracing.js";
+import { recordRequest, getMetrics } from "./metrics.js";
+import { isEnabled, getAllFlags } from "./feature-flags.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
-const CURVE_ENABLED = process.env.CURVE_ENABLED !== "false";
+const CURVE_ENABLED = isEnabled("curve_enabled");
 
 function log(message: string) {
   logger.info(message);
@@ -784,6 +787,10 @@ const INDEX_HTML = `<!DOCTYPE html>
 </html>`;
 
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+  const requestStart = Date.now();
+  const requestId = getRequestId(req);
+  setTraceHeaders(res, requestId);
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -802,7 +809,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   }
 
   if (url.pathname === "/health") {
-    sendJson(res, 200, { status: "ok" });
+    sendJson(res, 200, { status: "ok", requestId, flags: getAllFlags() });
+    recordRequest("/health", Date.now() - requestStart, false);
+    return;
+  }
+
+  if (url.pathname === "/metrics") {
+    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+    res.end(getMetrics());
     return;
   }
 
@@ -829,6 +843,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           `${result.to_symbol || to.slice(0, 10)}, amount=${amount}, ` +
           `output=${result.output_amount}, provider=${result.provider}, ${duration}ms`
       );
+      recordRequest("/quote", duration, false);
       sendJson(res, 200, result);
     } catch (err) {
       const duration = Date.now() - startTime;
@@ -836,6 +851,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         `Quote failed: chain=${chainId} ${from.slice(0, 10)} -> ${to.slice(0, 10)}, ${duration}ms`,
         err
       );
+      recordRequest("/quote", duration, true);
       sendError(res, 500, err instanceof Error ? err.message : "Unknown error");
     }
     return;
@@ -858,6 +874,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         `Compare: chain=${chainId} ${from.slice(0, 10)} -> ${to.slice(0, 10)}, ` +
           `amount=${amount}, recommendation=${result.recommendation}, ${duration}ms`
       );
+      recordRequest("/compare", duration, false);
       sendJson(res, 200, result);
     } catch (err) {
       const duration = Date.now() - startTime;
@@ -865,6 +882,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         `Compare failed: chain=${chainId} ${from.slice(0, 10)} -> ${to.slice(0, 10)}, ${duration}ms`,
         err
       );
+      recordRequest("/compare", duration, true);
       sendError(res, 500, err instanceof Error ? err.message : "Unknown error");
     }
     return;
@@ -886,6 +904,7 @@ async function main() {
         log("Initializing Curve API...");
         await initCurve(rpcUrl);
         log("Curve API initialized");
+        captureMessage("Curve API initialized successfully");
       } catch (err) {
         logError("Curve initialization failed, continuing without Curve", err);
       }

@@ -16,6 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "dead-code": "knip",
+    "duplicates": "jscpd src/",
+    "docs": "typedoc --entryPoints src/server.ts src/config.ts src/quote.ts src/curve.ts src/metrics.ts src/tracing.ts src/feature-flags.ts --out docs/api",
     "prepare": "husky"
   },
   "dependencies": {
@@ -32,9 +35,12 @@
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.2",
     "husky": "^9.1.7",
+    "jscpd": "^4.0.8",
+    "knip": "^5.85.0",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0",
+    "typedoc": "^0.28.17",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
     "vitest": "^4.0.18"

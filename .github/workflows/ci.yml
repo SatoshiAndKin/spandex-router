@@ -20,3 +20,41 @@ jobs:
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
+      - name: Dead code check
+        run: npm run dead-code
+      - name: Duplicate code check
+        run: npm run duplicates
+
+  validate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate AGENTS.md exists and is non-empty
+        run: |
+          test -f AGENTS.md || (echo "AGENTS.md missing" && exit 1)
+          test -s AGENTS.md || (echo "AGENTS.md is empty" && exit 1)
+          echo "AGENTS.md validated"
+      - name: Validate README.md exists
+        run: test -f README.md || (echo "README.md missing" && exit 1)
+      - name: Check for TODO/FIXME tech debt
+        run: |
+          echo "## Tech Debt Report"
+          grep -rn "TODO\|FIXME\|HACK\|XXX" src/ --include="*.ts" || echo "No tech debt markers found"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=high || true
+      - name: Check for large files
+        run: |
+          find . -not -path './node_modules/*' -not -path './.git/*' -size +5M -type f | while read f; do
+            echo "WARNING: Large file detected: $f ($(du -h "$f" | cut -f1))"
+            exit 1
+          done || echo "No large files found"

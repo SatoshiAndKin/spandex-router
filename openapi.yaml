@@ -1,0 +1,273 @@
+openapi: "3.0.3"
+info:
+  title: FlashProfits Spandex Router
+  version: "1.0.0"
+  description: DEX aggregator quote server querying Spandex and Curve for best-priced swap quotes.
+
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /chains:
+    get:
+      summary: List supported chains
+      operationId: getChains
+      responses:
+        "200":
+          description: Map of chain IDs to chain metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    alchemySubdomain:
+                      type: string
+
+  /quote:
+    get:
+      summary: Get best Spandex quote
+      operationId: getQuote
+      parameters:
+        - name: chainId
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: Chain ID (1, 8453, 42161, 10, 137, 56, 43114)
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+          description: Input token address
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+          description: Output token address
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Human-readable input amount
+        - name: slippageBps
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 0
+            maximum: 10000
+          description: Slippage tolerance in basis points
+        - name: sender
+          in: query
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+          description: Sender address for approval checks
+      responses:
+        "200":
+          description: Best quote found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpandexQuote"
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Quote failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /compare:
+    get:
+      summary: Compare Spandex vs Curve quotes
+      operationId: compareQuotes
+      parameters:
+        - name: chainId
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: slippageBps
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: sender
+          in: query
+          schema:
+            type: string
+            pattern: "^0x[a-fA-F0-9]{40}$"
+      responses:
+        "200":
+          description: Comparison result with recommendation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompareResult"
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    SpandexQuote:
+      type: object
+      properties:
+        chainId:
+          type: integer
+        from:
+          type: string
+        from_symbol:
+          type: string
+        to:
+          type: string
+        to_symbol:
+          type: string
+        amount:
+          type: string
+        output_amount:
+          type: string
+        output_amount_raw:
+          type: string
+        input_amount_raw:
+          type: string
+        provider:
+          type: string
+        slippage_bps:
+          type: integer
+        gas_used:
+          type: string
+        router_address:
+          type: string
+        router_calldata:
+          type: string
+        router_value:
+          type: string
+        approval_token:
+          type: string
+        approval_spender:
+          type: string
+
+    CurveQuote:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [curve]
+        from:
+          type: string
+        from_symbol:
+          type: string
+        to:
+          type: string
+        to_symbol:
+          type: string
+        amount:
+          type: string
+        output_amount:
+          type: string
+        route:
+          type: array
+          items:
+            type: object
+            properties:
+              poolId:
+                type: string
+              poolName:
+                type: string
+              poolAddress:
+                type: string
+              inputCoinAddress:
+                type: string
+              outputCoinAddress:
+                type: string
+        route_symbols:
+          type: object
+          additionalProperties:
+            type: string
+        router_address:
+          type: string
+        router_calldata:
+          type: string
+
+    CompareResult:
+      type: object
+      properties:
+        spandex:
+          $ref: "#/components/schemas/SpandexQuote"
+          nullable: true
+        spandex_error:
+          type: string
+          nullable: true
+        curve:
+          $ref: "#/components/schemas/CurveQuote"
+          nullable: true
+        curve_error:
+          type: string
+          nullable: true
+        recommendation:
+          type: string
+          enum: [spandex, curve]
+          nullable: true
+        recommendation_reason:
+          type: string
+        gas_price_gwei:
+          type: string
+          nullable: true

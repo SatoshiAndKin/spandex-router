@@ -1,4 +1,5 @@
 import "./env.js";
+import "./sentry.js";
 import http from "node:http";
 import { getQuote, serializeWithBigInt } from "@spandex/core";
 import type { Address } from "viem";
@@ -14,19 +15,21 @@ import {
 } from "./config.js";
 import { defaultTokens } from "./default-tokenlist.js";
 import { initCurve, findCurveQuote, isCurveSupported, type CurveQuoteResult } from "./curve.js";
+import { logger } from "./logger.js";
+import { captureException } from "./sentry.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
 const CURVE_ENABLED = process.env.CURVE_ENABLED !== "false";
 
 function log(message: string) {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${message}`);
+  logger.info(message);
 }
 
 function logError(message: string, err?: unknown) {
-  const timestamp = new Date().toISOString();
-  console.error(`[${timestamp}] ERROR: ${message}`, err instanceof Error ? err.message : err || "");
+  const errorDetail = err instanceof Error ? err.message : err || "";
+  logger.error({ err: errorDetail }, message);
+  captureException(err, { message });
 }
 
 const config = getSpandexConfig();

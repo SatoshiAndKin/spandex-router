@@ -24,6 +24,8 @@ jobs:
         run: npm run dead-code
       - name: Duplicate code check
         run: npm run duplicates
+      - name: Dead feature flag check
+        run: npm run dead-flags
 
   validate-docs:
     runs-on: ubuntu-latest

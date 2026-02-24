@@ -20,6 +20,8 @@ import { captureException, captureMessage } from "./sentry.js";
 import { getRequestId, setTraceHeaders } from "./tracing.js";
 import { recordRequest, getMetrics } from "./metrics.js";
 import { isEnabled, getAllFlags } from "./feature-flags.js";
+import { trackQuote, getAnalyticsSummary } from "./analytics.js";
+import { trackError, getErrorInsights } from "./error-insights.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -814,9 +816,19 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return;
   }
 
-  if (url.pathname === "/metrics") {
+  if (url.pathname === "/metrics" && isEnabled("metrics_endpoint")) {
     res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
     res.end(getMetrics());
+    return;
+  }
+
+  if (url.pathname === "/analytics") {
+    sendJson(res, 200, getAnalyticsSummary());
+    return;
+  }
+
+  if (url.pathname === "/errors") {
+    sendJson(res, 200, getErrorInsights());
     return;
   }
 
@@ -844,6 +856,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           `output=${result.output_amount}, provider=${result.provider}, ${duration}ms`
       );
       recordRequest("/quote", duration, false);
+      trackQuote({
+        chainId,
+        fromToken: from,
+        toToken: to,
+        provider: result.provider,
+        durationMs: duration,
+        success: true,
+        outputAmount: result.output_amount,
+      });
       sendJson(res, 200, result);
     } catch (err) {
       const duration = Date.now() - startTime;
@@ -852,12 +873,21 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         err
       );
       recordRequest("/quote", duration, true);
+      trackQuote({
+        chainId,
+        fromToken: from,
+        toToken: to,
+        provider: "unknown",
+        durationMs: duration,
+        success: false,
+      });
+      trackError(err, `quote:${chainId}:${from.slice(0, 10)}-${to.slice(0, 10)}`);
       sendError(res, 500, err instanceof Error ? err.message : "Unknown error");
     }
     return;
   }
 
-  if (url.pathname === "/compare" && req.method === "GET") {
+  if (url.pathname === "/compare" && req.method === "GET" && isEnabled("compare_endpoint")) {
     const parsed = parseQuoteParams(url.searchParams);
     if (!parsed.success) {
       sendError(res, 400, parsed.error);
@@ -883,6 +913,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         err
       );
       recordRequest("/compare", duration, true);
+      trackError(err, `compare:${chainId}:${from.slice(0, 10)}-${to.slice(0, 10)}`);
       sendError(res, 500, err instanceof Error ? err.message : "Unknown error");
     }
     return;

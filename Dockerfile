@@ -3,7 +3,7 @@ FROM node:24-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm install -g tsx
+RUN npm ci --omit=dev --ignore-scripts && npm install -g tsx
 
 COPY src/ ./src/
 COPY tsconfig.json ./

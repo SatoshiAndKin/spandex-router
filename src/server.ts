@@ -1,9 +1,17 @@
+import "./env.js";
 import http from "node:http";
 import { getQuote, serializeWithBigInt } from "@spandex/core";
 import type { Address } from "viem";
 import { parseUnits, formatUnits } from "viem";
 import { parseQuoteParams } from "./quote.js";
-import { getSpandexConfig, getTokenDecimals, getTokenSymbol, SUPPORTED_CHAINS } from "./config.js";
+import {
+  getSpandexConfig,
+  getTokenDecimals,
+  getTokenSymbol,
+  SUPPORTED_CHAINS,
+  DEFAULT_TOKENS,
+} from "./config.js";
+import { defaultTokens } from "./default-tokenlist.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -40,6 +48,8 @@ interface QuoteResult {
   approval_spender?: string;
 }
 
+const FALLBACK_ACCOUNT = "0xEe7aE85f2Fe2239E27D9c1E23fFFe168D63b4055" as Address;
+
 async function findQuote(
   chainId: number,
   from: string,
@@ -57,21 +67,32 @@ async function findQuote(
 
   const inputAmount = parseUnits(amount, inputDecimals);
 
-  const swapperAccount = (sender || "0xEe7aE85f2Fe2239E27D9c1E23fFFe168D63b4055") as Address;
+  const swapRequest = {
+    chainId,
+    inputToken: from as Address,
+    outputToken: to as Address,
+    mode: "exactIn" as const,
+    inputAmount,
+    slippageBps,
+  };
 
-  const quote = await getQuote({
-    config,
-    swap: {
-      chainId,
-      inputToken: from as Address,
-      outputToken: to as Address,
-      mode: "exactIn",
-      inputAmount,
-      slippageBps,
-      swapperAccount,
-    },
-    strategy: "bestPrice",
-  });
+  let quote = null;
+
+  if (sender) {
+    quote = await getQuote({
+      config,
+      swap: { ...swapRequest, swapperAccount: sender as Address },
+      strategy: "bestPrice",
+    });
+  }
+
+  if (!quote) {
+    quote = await getQuote({
+      config,
+      swap: { ...swapRequest, swapperAccount: FALLBACK_ACCOUNT },
+      strategy: "bestPrice",
+    });
+  }
 
   if (!quote) {
     throw new Error("No providers returned a successful quote");
@@ -131,9 +152,9 @@ const INDEX_HTML = `<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-    h1 { margin-bottom: 20px; color: #333; }
+    h1 { margin: 0 0 16px; color: #333; }
     form { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    .form-group { margin-bottom: 16px; }
+    .form-group { margin-bottom: 16px; position: relative; }
     label { display: block; font-weight: 600; margin-bottom: 6px; color: #555; }
     input { width: 100%; padding: 10px; font-size: 14px; font-family: monospace; border: 1px solid #ddd; border-radius: 4px; }
     input:focus { outline: none; border-color: #0066cc; }
@@ -151,10 +172,38 @@ const INDEX_HTML = `<!DOCTYPE html>
     .field-value { color: #4ec9b0; word-break: break-all; }
     .field-value.number { color: #b5cea8; }
     .provider-tag { display: inline-block; background: #264f78; color: #9cdcfe; padding: 3px 10px; border-radius: 4px; font-size: 13px; margin-left: 8px; }
+    .autocomplete-list { position: absolute; z-index: 10; background: white; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; width: 100%; display: none; }
+    .autocomplete-list.show { display: block; }
+    .autocomplete-item { padding: 8px 10px; cursor: pointer; font-size: 13px; font-family: monospace; }
+    .autocomplete-item:hover, .autocomplete-item.active { background: #e8f0fe; }
+    .autocomplete-item .symbol { font-weight: 600; color: #333; font-family: system-ui, sans-serif; }
+    .autocomplete-item .addr { color: #888; font-size: 11px; margin-left: 6px; }
+    .tokenlist-section { background: white; padding: 16px 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .tokenlist-section summary { cursor: pointer; font-weight: 600; color: #555; }
+    .tokenlist-section textarea { width: 100%; height: 120px; margin-top: 10px; font-family: monospace; font-size: 12px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+    .tokenlist-actions { margin-top: 8px; display: flex; gap: 8px; }
+    .tokenlist-actions button { padding: 6px 14px; font-size: 13px; }
+    .btn-secondary { background: #666; }
+    .btn-secondary:hover { background: #555; }
+    .btn-danger { background: #c0392b; }
+    .btn-danger:hover { background: #a93226; }
   </style>
 </head>
 <body>
   <h1>Spandex Quote Finder</h1>
+
+  <details class="tokenlist-section">
+    <summary>Token List (autocomplete)</summary>
+    <p style="color: #888; font-size: 13px; margin: 8px 0 4px;">
+      Paste a <a href="https://tokenlists.org" target="_blank">tokenlist.json</a> URL or raw JSON. Tokens for the selected chain will appear as autocomplete suggestions.
+    </p>
+    <textarea id="tokenlistInput" placeholder='https://tokens.uniswap.org or paste raw JSON...'></textarea>
+    <div class="tokenlist-actions">
+      <button type="button" id="loadTokenlist">Load</button>
+      <button type="button" id="clearTokenlist" class="btn-danger">Clear</button>
+    </div>
+    <div id="tokenlistStatus" style="font-size: 12px; color: #888; margin-top: 6px;"></div>
+  </details>
 
   <form id="form">
     <div class="form-row">
@@ -177,11 +226,13 @@ const INDEX_HTML = `<!DOCTYPE html>
     </div>
     <div class="form-group">
       <label for="from">From (token address)</label>
-      <input type="text" id="from" placeholder="0x..." value="0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913">
+      <input type="text" id="from" placeholder="0x... or search by symbol" autocomplete="off">
+      <div class="autocomplete-list" id="fromAutocomplete"></div>
     </div>
     <div class="form-group">
       <label for="to">To (token address)</label>
-      <input type="text" id="to" placeholder="0x..." value="0x4200000000000000000000000000000000000006">
+      <input type="text" id="to" placeholder="0x... or search by symbol" autocomplete="off">
+      <div class="autocomplete-list" id="toAutocomplete"></div>
     </div>
     <div class="form-group">
       <label for="amount">Input Amount (human-readable)</label>
@@ -197,6 +248,147 @@ const INDEX_HTML = `<!DOCTYPE html>
   <div id="result"></div>
 
   <script>
+    const DEFAULT_TOKENS = ${JSON.stringify(DEFAULT_TOKENS)};
+    const BUILTIN_TOKENS = ${JSON.stringify(defaultTokens)};
+
+    const TOKENLIST_STORAGE_KEY = 'spandex_tokenlist';
+    let userTokens = [];
+
+    function loadStoredTokenlist() {
+      try {
+        const stored = localStorage.getItem(TOKENLIST_STORAGE_KEY);
+        if (stored) {
+          userTokens = JSON.parse(stored);
+          document.getElementById('tokenlistStatus').textContent =
+            userTokens.length + ' custom tokens loaded from storage';
+        }
+      } catch {}
+    }
+
+    function saveTokenlist(tokens) {
+      userTokens = tokens;
+      localStorage.setItem(TOKENLIST_STORAGE_KEY, JSON.stringify(tokens));
+    }
+
+    function getTokensForChain(chainId) {
+      const cid = Number(chainId);
+      const all = [...BUILTIN_TOKENS, ...userTokens];
+      const seen = new Set();
+      return all.filter(t => {
+        if (t.chainId !== cid) return false;
+        const addr = t.address.toLowerCase();
+        if (seen.has(addr)) return false;
+        seen.add(addr);
+        return true;
+      });
+    }
+
+    async function handleLoadTokenlist() {
+      const input = document.getElementById('tokenlistInput').value.trim();
+      const status = document.getElementById('tokenlistStatus');
+      if (!input) { status.textContent = 'Please enter a URL or JSON.'; return; }
+
+      status.textContent = 'Loading...';
+      try {
+        let data;
+        if (input.startsWith('http://') || input.startsWith('https://')) {
+          const res = await fetch(input);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          data = await res.json();
+        } else {
+          data = JSON.parse(input);
+        }
+        const tokens = data.tokens || data;
+        if (!Array.isArray(tokens)) throw new Error('Expected tokens array');
+        saveTokenlist(tokens);
+        status.textContent = tokens.length + ' custom tokens loaded and saved.';
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    function handleClearTokenlist() {
+      userTokens = [];
+      localStorage.removeItem(TOKENLIST_STORAGE_KEY);
+      document.getElementById('tokenlistStatus').textContent = 'Custom token list cleared. Built-in tokens still available.';
+      document.getElementById('tokenlistInput').value = '';
+    }
+
+    document.getElementById('loadTokenlist').addEventListener('click', handleLoadTokenlist);
+    document.getElementById('clearTokenlist').addEventListener('click', handleClearTokenlist);
+
+    function setupAutocomplete(inputId, listId) {
+      const input = document.getElementById(inputId);
+      const list = document.getElementById(listId);
+      let activeIdx = -1;
+
+      function render(matches) {
+        list.innerHTML = '';
+        activeIdx = -1;
+        if (!matches.length) { list.classList.remove('show'); return; }
+        list.classList.add('show');
+        matches.slice(0, 20).forEach((token, i) => {
+          const div = document.createElement('div');
+          div.className = 'autocomplete-item';
+          div.innerHTML = '<span class="symbol">' + token.symbol + '</span>' +
+            '<span class="addr">' + token.address + '</span>';
+          div.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            input.value = token.address;
+            list.classList.remove('show');
+          });
+          list.appendChild(div);
+        });
+      }
+
+      input.addEventListener('input', () => {
+        const val = input.value.trim().toLowerCase();
+        if (!val || val.startsWith('0x')) { list.classList.remove('show'); return; }
+        const chainId = document.getElementById('chainId').value;
+        const chainTokens = getTokensForChain(chainId);
+        const matches = chainTokens.filter(t =>
+          t.symbol.toLowerCase().includes(val) || t.name?.toLowerCase().includes(val)
+        );
+        render(matches);
+      });
+
+      input.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('.autocomplete-item');
+        if (!items.length) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          activeIdx = Math.min(activeIdx + 1, items.length - 1);
+          items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          activeIdx = Math.max(activeIdx - 1, 0);
+          items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+        } else if (e.key === 'Enter' && activeIdx >= 0) {
+          e.preventDefault();
+          items[activeIdx].dispatchEvent(new Event('mousedown'));
+        } else if (e.key === 'Escape') {
+          list.classList.remove('show');
+        }
+      });
+
+      input.addEventListener('blur', () => { setTimeout(() => list.classList.remove('show'), 150); });
+    }
+
+    setupAutocomplete('from', 'fromAutocomplete');
+    setupAutocomplete('to', 'toAutocomplete');
+
+    function applyDefaults(chainId) {
+      const defaults = DEFAULT_TOKENS[chainId];
+      if (defaults) {
+        document.getElementById('from').value = defaults.from;
+        document.getElementById('to').value = defaults.to;
+      }
+    }
+
+    document.getElementById('chainId').addEventListener('change', function() {
+      applyDefaults(Number(this.value));
+    });
+
     const form = document.getElementById('form');
     const result = document.getElementById('result');
     const submit = document.getElementById('submit');
@@ -313,13 +505,18 @@ const INDEX_HTML = `<!DOCTYPE html>
       }
     });
 
+    // Restore from URL params or apply chain defaults
     const params = new URLSearchParams(window.location.search);
     if (params.get('chainId')) document.getElementById('chainId').value = params.get('chainId');
     if (params.get('from')) document.getElementById('from').value = params.get('from');
+    else applyDefaults(Number(document.getElementById('chainId').value));
     if (params.get('to')) document.getElementById('to').value = params.get('to');
     if (params.get('amount')) document.getElementById('amount').value = params.get('amount');
     if (params.get('slippageBps')) document.getElementById('slippageBps').value = params.get('slippageBps');
     if (params.get('sender')) document.getElementById('sender').value = params.get('sender');
+    if (!params.get('from') && !params.get('to')) applyDefaults(Number(document.getElementById('chainId').value));
+
+    loadStoredTokenlist();
   </script>
 </body>
 </html>`;

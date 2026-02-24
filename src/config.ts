@@ -23,6 +23,37 @@ export const SUPPORTED_CHAINS: Record<number, { name: string; alchemySubdomain: 
   43114: { name: "Avalanche", alchemySubdomain: "avax-mainnet" },
 };
 
+export const DEFAULT_TOKENS: Record<number, { from: string; to: string }> = {
+  1: {
+    from: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    to: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  },
+  8453: {
+    from: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    to: "0x4200000000000000000000000000000000000006",
+  },
+  42161: {
+    from: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    to: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+  },
+  10: {
+    from: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    to: "0x4200000000000000000000000000000000000006",
+  },
+  137: {
+    from: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    to: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+  },
+  56: {
+    from: "0x55d398326f99059fF775485246999027B3197955",
+    to: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  },
+  43114: {
+    from: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+    to: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
+  },
+};
+
 const erc20Abi = [
   {
     name: "decimals",

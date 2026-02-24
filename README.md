@@ -1,3 +1,5 @@
+> **WARNING: This is a vibe coded prototype. Use at your own risk.**
+
 # flashprofits-spandex-router
 
 A DEX aggregator quote server built on [Spandex](https://www.spandex.exchange/). It queries multiple swap providers (0x, Fabric, KyberSwap, Odos, LiFi, Relay, Velora) and returns the best-priced quote for a given token pair. Includes a built-in web UI for testing quotes interactively.

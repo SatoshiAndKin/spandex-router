@@ -13,7 +13,7 @@ Helps debug failed or incorrect swap quotes by tracing the request through provi
 2. Verify token addresses are valid for the specified chain
 3. Check if the token pair has liquidity on the specified chain
 4. Test the quote with a known-good sender address (whale fallback)
-5. Compare Spandex vs Curve outputs for the same pair
+5. Compare router outputs (Spandex vs Curve) for the same pair using `/compare`
 6. Check gas estimation and ensure the router has sufficient allowance
 
 ## Key Files

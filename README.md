@@ -1,8 +1,8 @@
 > **WARNING: This is a vibe coded prototype. Use at your own risk.**
 
-# flashprofits-spandex-router
+# compare-dex-routers
 
-A DEX aggregator quote server built on [Spandex](https://www.spandex.exchange/). It queries multiple swap providers (0x, Fabric, KyberSwap, Odos, LiFi, Relay, Velora) and returns the best-priced quote for a given token pair. Includes a built-in web UI for testing quotes interactively.
+A DEX router comparison tool that queries multiple swap routers ([Spandex](https://www.spandex.exchange/) and Curve Finance) and returns quotes from each. Compare pricing, routes, and gas estimates side-by-side. Includes a built-in web UI for testing quotes interactively.
 
 ## Supported Chains
 
@@ -18,9 +18,9 @@ A DEX aggregator quote server built on [Spandex](https://www.spandex.exchange/).
 
 ## API
 
-### `GET /quote`
+### `GET /compare`
 
-Returns the best swap quote across all configured providers.
+Compare quotes from multiple routers (Spandex and Curve) side-by-side.
 
 | Param        | Required | Description                                |
 | ------------ | -------- | ------------------------------------------ |
@@ -30,6 +30,12 @@ Returns the best swap quote across all configured providers.
 | `amount`     | yes      | Human-readable input amount (e.g. `1000`)  |
 | `slippageBps`| no       | Slippage tolerance in basis points (default `50`) |
 | `sender`     | no       | Sender address for approval checks         |
+
+### `GET /quote`
+
+Returns a quote from the Spandex router (aggregates across 0x, Fabric, KyberSwap, Odos, LiFi, Relay, Velora).
+
+Same parameters as `/compare`.
 
 ### `GET /chains`
 
@@ -41,7 +47,7 @@ Health check endpoint.
 
 ### `GET /`
 
-Interactive web UI for testing quotes.
+Interactive web UI for comparing quotes.
 
 ## Prerequisites
 

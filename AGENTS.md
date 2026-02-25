@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-FlashProfits Spandex Router is a DEX aggregator quote server that queries multiple swap providers (Spandex and Curve) and returns the best-priced quote for a given token pair. It includes a built-in web UI.
+FlashProfits DEX Router Comparison is a quote comparison server that queries multiple DEX routers (Spandex and Curve Finance) and returns quotes from each for side-by-side comparison. Spandex aggregates across multiple providers (0x, Fabric, KyberSwap, Odos, LiFi, Relay, Velora). Includes a built-in web UI.
 
 **Language:** TypeScript (Node.js >= 20, ESM)
 **Runtime:** tsx (TypeScript execution without build step)
@@ -34,7 +34,7 @@ npm run dev           # starts server with file watching at http://localhost:300
 ## Architecture
 
 - `src/server.ts` - HTTP server, request routing, HTML UI (inline template)
-- `src/config.ts` - Chain config, Spandex setup, viem clients, token metadata
+- `src/config.ts` - Chain config, router setup, viem clients, token metadata
 - `src/curve.ts` - Curve Finance API integration (Ethereum only)
 - `src/quote.ts` - Query parameter parsing and validation
 - `src/env.ts` - .env file loader (imported first in server.ts)
@@ -50,8 +50,8 @@ npm run dev           # starts server with file watching at http://localhost:300
 - `GET /` - Web UI
 - `GET /health` - Health check
 - `GET /chains` - Supported chains list
-- `GET /quote` - Spandex-only quote (chainId, from, to, amount, slippageBps, sender)
-- `GET /compare` - Compare Spandex vs Curve (same params as /quote)
+- `GET /compare` - Compare quotes from Spandex and Curve (chainId, from, to, amount, slippageBps, sender)
+- `GET /quote` - Single quote from Spandex router (same params as /compare)
 - `GET /metrics` - Prometheus-compatible metrics endpoint
 
 ## Environment Variables

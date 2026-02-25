@@ -6,22 +6,23 @@
 
 **Steps**:
 1. Check container status: `docker ps`
-2. Check logs: `docker logs spandex-router --tail 100`
+2. Check logs: `docker logs compare-dex-routers --tail 100`
 3. Verify port binding: `curl http://localhost:3000/health`
 4. Check Sentry for recent errors
 5. Restart: `docker-compose restart`
 
-## High Error Rate on /quote
+## High Error Rate on /quote or /compare
 
-**Symptoms**: Sentry alerts on quote failures, metrics show elevated `spandex_errors_total`
+**Symptoms**: Sentry alerts on quote failures, metrics show elevated error counts
 
 **Steps**:
-1. Check `/metrics` for error counts per endpoint
-2. Review Sentry for error patterns (provider timeouts, RPC errors)
+1. Check `/metrics` for error counts per endpoint and router
+2. Review Sentry for error patterns (provider timeouts, RPC errors, router failures)
 3. Verify RPC endpoints are responding: check Alchemy dashboard
-4. Check if specific chains are affected
+4. Check if specific chains or routers are affected
 5. If provider-specific: check 0x/Odos/KyberSwap status pages
-6. Temporary mitigation: increase timeout or disable failing provider
+6. If Curve-specific: check Curve API status
+7. Temporary mitigation: increase timeout or disable failing provider/router
 
 ## Curve Initialization Failure
 
@@ -46,7 +47,7 @@
 
 **Steps**:
 1. Identify the last known good version tag
-2. Pull previous image: `docker pull ghcr.io/satoshiandkin/spandex-router:<tag>`
+2. Pull previous image: `docker pull ghcr.io/satoshiandkin/compare-dex-routers:<tag>`
 3. Update docker-compose or deployment to use previous tag
 4. Restart: `docker-compose up -d`
 5. Verify health: `curl http://localhost:3000/health`

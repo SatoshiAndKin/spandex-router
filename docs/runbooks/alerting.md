@@ -29,21 +29,21 @@ The `/metrics` endpoint exposes Prometheus-compatible metrics. Configure alerts 
 ```yaml
 # High error rate
 - alert: HighErrorRate
-  expr: rate(spandex_errors_total[5m]) > 0.1
+  expr: rate(http_errors_total[5m]) > 0.1
   for: 5m
   labels:
     severity: warning
 
 # Slow responses
 - alert: SlowQuoteResponse
-  expr: spandex_request_duration_ms{path="/quote"} > 30000
+  expr: http_request_duration_ms{path=~"/quote|/compare"} > 30000
   for: 5m
   labels:
     severity: warning
 
 # Service down
 - alert: ServiceDown
-  expr: up{job="spandex-router"} == 0
+  expr: up{job="dex-router-compare"} == 0
   for: 1m
   labels:
     severity: critical

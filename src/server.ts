@@ -69,13 +69,9 @@ async function findQuote(
   slippageBps: number,
   sender?: string
 ): Promise<QuoteResult> {
-  const [inputDecimals, outputDecimals, fromSymbol, toSymbol] = await Promise.all([
-    getTokenDecimals(chainId, from),
-    getTokenDecimals(chainId, to),
-    getTokenSymbol(chainId, from),
-    getTokenSymbol(chainId, to),
-  ]);
-
+  // Only input decimals are needed before calling Spandex (for parseUnits).
+  // Output decimals and symbols are fetched in parallel with the quote.
+  const inputDecimals = await getTokenDecimals(chainId, from);
   const inputAmount = parseUnits(amount, inputDecimals);
 
   const swapRequest = {
@@ -87,23 +83,35 @@ async function findQuote(
     slippageBps,
   };
 
-  let quote = null;
-
+  // Fire sender and fallback quotes in parallel when sender is provided
+  const quotePromises = [];
   if (sender) {
-    quote = await getQuote({
-      config,
-      swap: { ...swapRequest, swapperAccount: sender as Address },
-      strategy: "bestPrice",
-    });
+    quotePromises.push(
+      getQuote({
+        config,
+        swap: { ...swapRequest, swapperAccount: sender as Address },
+        strategy: "bestPrice",
+      })
+    );
   }
-
-  if (!quote) {
-    quote = await getQuote({
+  quotePromises.push(
+    getQuote({
       config,
       swap: { ...swapRequest, swapperAccount: FALLBACK_ACCOUNT },
       strategy: "bestPrice",
-    });
-  }
+    })
+  );
+
+  // Fetch non-critical metadata concurrently with the Spandex query
+  const [quotes, outputDecimals, fromSymbol, toSymbol] = await Promise.all([
+    Promise.all(quotePromises),
+    getTokenDecimals(chainId, to),
+    getTokenSymbol(chainId, from),
+    getTokenSymbol(chainId, to),
+  ]);
+
+  // Prefer sender quote, fall back to fallback account quote
+  const quote = quotes.find((q) => q !== null) ?? null;
 
   if (!quote) {
     throw new Error("No providers returned a successful quote");

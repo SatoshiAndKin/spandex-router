@@ -120,7 +120,7 @@ export function getSpandexConfig(): Config {
     providers: buildProviders(),
     clients: (chainId: number) => getClient(chainId),
     options: {
-      deadlineMs: 15_000,
+      deadlineMs: 5_000,
     },
   });
 }

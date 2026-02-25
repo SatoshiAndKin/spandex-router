@@ -1,4 +1,5 @@
 import curve from "@curvefi/api";
+import type { PublicClient } from "viem";
 
 const CURVE_CHAIN_ID = 1;
 
@@ -69,6 +70,7 @@ export interface CurveQuoteResult {
   route_symbols: Record<string, string>;
   router_address: string;
   router_calldata: string;
+  gas_used?: string;
   approval_target?: string;
   approval_calldata?: string;
 }
@@ -79,7 +81,8 @@ export async function findCurveQuote(
   from: string,
   to: string,
   amount: string,
-  sender?: string
+  sender?: string,
+  client?: PublicClient
 ): Promise<CurveQuoteResult> {
   if (!initialized) throw new Error("Curve API not initialized");
 
@@ -123,6 +126,21 @@ export async function findCurveQuote(
     router_address: swapTx.to,
     router_calldata: swapTx.data,
   };
+
+  // Estimate gas using viem client if provided
+  if (client && sender && ADDRESS_REGEX.test(sender)) {
+    try {
+      const gasEstimate = await client.estimateGas({
+        account: sender as `0x${string}`,
+        to: swapTx.to as `0x${string}`,
+        data: swapTx.data as `0x${string}`,
+        value: swapTx.value ? BigInt(swapTx.value) : 0n,
+      });
+      result.gas_used = gasEstimate.toString();
+    } catch {
+      // Gas estimation failed, leave it undefined
+    }
+  }
 
   if (sender && ADDRESS_REGEX.test(sender)) {
     try {

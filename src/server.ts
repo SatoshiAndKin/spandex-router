@@ -172,7 +172,7 @@ async function compareQuotes(
 
   const curveAvailable = CURVE_ENABLED && isCurveSupported(chainId);
   const curvePromise = curveAvailable
-    ? findCurveQuote(from, to, amount, sender)
+    ? findCurveQuote(from, to, amount, sender, getClient(chainId))
         .then((r) => ({ result: r, error: null }))
         .catch((err) => ({ result: null, error: err instanceof Error ? err.message : String(err) }))
     : Promise.resolve({ result: null, error: "Curve only supports Ethereum (chainId 1)" });
@@ -195,23 +195,29 @@ async function compareQuotes(
     const spandexOutput = Number(spandex.result.output_amount);
     const curveOutput = Number(curveResult.result.output_amount);
     const spandexGas = Number(spandex.result.gas_used || "0");
+    const curveGas = Number(curveResult.result.gas_used || "0");
     const gasPriceWei = gasPriceGwei ? Number(gasPriceGwei) * 1e9 : 0;
     const spandexGasCostEth = gasPriceWei > 0 ? (spandexGas * gasPriceWei) / 1e18 : 0;
+    const curveGasCostEth = gasPriceWei > 0 ? (curveGas * gasPriceWei) / 1e18 : 0;
 
     if (curveOutput > spandexOutput) {
       recommendation = "curve";
       const diff = curveOutput - spandexOutput;
       const pct = ((diff / spandexOutput) * 100).toFixed(3);
       reason = `Curve outputs ${diff.toFixed(6)} more (+${pct}%)`;
-      if (spandexGasCostEth > 0) {
-        reason += `. Spandex gas: ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH)`;
+      if (curveGasCostEth > 0 && spandexGasCostEth > 0) {
+        reason += `. Gas: Curve ${curveGas} units (~${curveGasCostEth.toFixed(6)} ETH) vs Spandex ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH)`;
+      } else if (curveGasCostEth > 0) {
+        reason += `. Curve gas: ${curveGas} units (~${curveGasCostEth.toFixed(6)} ETH)`;
       }
     } else if (spandexOutput > curveOutput) {
       recommendation = "spandex";
       const diff = spandexOutput - curveOutput;
       const pct = ((diff / curveOutput) * 100).toFixed(3);
       reason = `Spandex (${spandex.result.provider}) outputs ${diff.toFixed(6)} more (+${pct}%)`;
-      if (spandexGasCostEth > 0) {
+      if (curveGasCostEth > 0 && spandexGasCostEth > 0) {
+        reason += `. Gas: Spandex ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH) vs Curve ${curveGas} units (~${curveGasCostEth.toFixed(6)} ETH)`;
+      } else if (spandexGasCostEth > 0) {
         reason += `. Spandex gas: ${spandexGas} units (~${spandexGasCostEth.toFixed(6)} ETH)`;
       }
     } else {

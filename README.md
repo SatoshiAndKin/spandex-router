@@ -4,6 +4,8 @@
 
 A DEX router comparison tool that queries multiple swap routers ([Spandex](https://www.spandex.exchange/) and Curve Finance) and returns quotes from each. Compare pricing, routes, and gas estimates side-by-side. Includes a built-in web UI for testing quotes interactively.
 
+![Web UI screenshot](docs/screenshot.png)
+
 ## Supported Chains
 
 | Chain     | ID    |

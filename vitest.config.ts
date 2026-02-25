@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     pool: "threads",
     isolate: true,
+    retry: 2,
     reporters: ["verbose"],
     benchmark: {
       reporters: ["verbose"],

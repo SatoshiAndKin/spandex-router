@@ -189,7 +189,7 @@ async function compareQuotes(
   const [spandex, curveResult] = await Promise.all([spandexPromise, curvePromise]);
 
   let recommendation: "spandex" | "curve" | null = null;
-  let reason = "";
+  let reason: string;
 
   if (spandex.result && curveResult.result) {
     const spandexOutput = Number(spandex.result.output_amount);

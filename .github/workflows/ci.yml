@@ -14,8 +14,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: npm
+      - uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('package-lock.json') }}
       - run: npm ci
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
@@ -47,11 +52,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: npm
-      - run: npm ci
       - name: Audit dependencies
         run: npm audit --audit-level=high || true
       - name: Check for large files
